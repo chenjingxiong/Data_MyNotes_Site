@@ -1,0 +1,117 @@
+# 部署到 OpenResty 服务器
+name: Deploy to OpenResty Server
+
+on:
+  # 推送到 main 分支时触发
+  push:
+    branches: [main]
+  # 手动触发
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. 检出代码
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          submodule-update: recursive
+
+      # 2. 设置 Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package.json
+
+      # 3. 安装 pnpm
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      # 4. 安装依赖
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # 5. 构建 VitePress
+      - name: Build VitePress
+        run: pnpm run docs:build
+        env:
+          NODE_ENV: production
+
+      # 6. 压缩构建产物
+      - name: Compress build artifacts
+        run: |
+          cd .vitepress/dist
+          tar -czf ../../dist.tar.gz *
+
+      # 7. 配置 SSH 密钥
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      # 8. 部署到 OpenResty 服务器
+      - name: Deploy to OpenResty
+        run: |
+          # 上传压缩包到服务器
+          scp -P ${{ secrets.SSH_PORT }} dist.tar.gz ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }}:/tmp/
+
+          # 在服务器上执行部署脚本
+          ssh -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+            # 设置变量
+            DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
+            BACKUP_PATH="${{ secrets.BACKUP_PATH }}"
+            SITE_NAME="${{ secrets.SITE_NAME }}"
+
+            # 创建备份目录
+            mkdir -p $BACKUP_PATH
+
+            # 备份当前版本
+            if [ -d "$DEPLOY_PATH" ]; then
+              BACKUP_NAME="$SITE_NAME-$(date +%Y%m%d_%H%M%S)"
+              echo "Backing up current version to $BACKUP_PATH/$BACKUP_NAME"
+              cp -r $DEPLOY_PATH $BACKUP_PATH/$BACKUP_NAME
+            fi
+
+            # 解压新版本
+            echo "Extracting new version..."
+            mkdir -p $DEPLOY_PATH
+            tar -xzf /tmp/dist.tar.gz -C $DEPLOY_PATH
+
+            # 清理临时文件
+            rm /tmp/dist.tar.gz
+
+            # 设置权限
+            chown -R ${{ secrets.NGINX_USER }}:$({{ secrets.NGINX_USER }}) $DEPLOY_PATH
+            chmod -R 755 $DEPLOY_PATH
+
+            # 测试 Nginx 配置
+            ${{ secrets.NGINX_TEST_CMD }}
+
+            # 重载 Nginx（平滑重启）
+            ${{ secrets.NGINX_RELOAD_CMD }}
+
+            echo "Deployment completed successfully!"
+          ENDSSH
+
+      # 9. 部署成功通知
+      - name: Deployment successful
+        run: |
+          echo "Successfully deployed to OpenResty server!"
+          echo "Server: ${{ secrets.SERVER_HOST }}"
+          echo "Deploy path: ${{ secrets.DEPLOY_PATH }}"
+
+      # 10. 清理 SSH 密钥
+      - name: Cleanup SSH
+        if: always()
+        run: |
+          rm -rf ~/.ssh/id_rsa

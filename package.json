@@ -1,0 +1,18 @@
+{
+  "name": "data-mynotes-site",
+  "version": "1.0.0",
+  "description": "VitePress site with Teek theme",
+  "type": "module",
+  "scripts": {
+    "docs:dev": "vitepress dev",
+    "docs:build": "vitepress build",
+    "docs:preview": "vitepress preview",
+    "deploy:openresty": "bash scripts/deploy-openresty.sh deploy",
+    "deploy:openresty:build": "bash scripts/deploy-openresty.sh build-only",
+    "rollback:openresty": "bash scripts/deploy-openresty.sh rollback"
+  },
+  "devDependencies": {
+    "vitepress": "^1.5.0",
+    "vitepress-theme-teek": "^1.5.4"
+  }
+}
